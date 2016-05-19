@@ -78,6 +78,29 @@ int cmd_cd(struct tokens *tokens) {
   return 1;
 }
 
+/* Execute programs */
+void Execv(struct tokens *tokens) {
+  int tokens_length = tokens_get_length(tokens);
+  char *path = tokens_get_token(tokens, 0);
+  char **argv = (char **)malloc((tokens_length + 1) * sizeof(char*));
+  pid_t pid;
+  int status;
+
+  for (int i = 0; i < tokens_length; ++i)
+    argv[i] = tokens_get_token(tokens, i);
+  argv[tokens_length] = NULL;
+  
+  pid = fork();
+  if (pid < 0)
+    perror("fork: ");
+  else if (pid == 0) {
+    if (execv(path, argv) == -1)
+      perror("execv: ");
+  }
+  wait(&status);
+  free(argv);
+}
+
 /* Looks up the built-in command, if it exists. */
 int lookup(char cmd[]) {
   for (int i = 0; i < sizeof(cmd_table) / sizeof(fun_desc_t); i++)
@@ -132,8 +155,8 @@ int main(int argc, char *argv[]) {
     if (fundex >= 0) {
       cmd_table[fundex].fun(tokens);
     } else {
-      /* REPLACE this to run commands as programs. */
-      fprintf(stdout, "This shell doesn't know how to run programs.\n");
+      /* Run commands as programs. */
+      Execv(tokens);
     }
 
     if (shell_is_interactive)
