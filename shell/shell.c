@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include "tokenizer.h"
 
@@ -45,6 +46,54 @@ fun_desc_t cmd_table[] = {
   {cmd_pwd, "pwd", "prints the current working directory"},
   {cmd_cd, "cd", "changes the current working directory to the specified directory"},
 };
+
+/* Parse the $PATH envirment.
+ * Returns a new array of pointers to each path value */
+char **parse_path_env(char *path_env)
+{
+  char **pathes = (char **)malloc(4096 * sizeof(char *));
+  int i;
+  char *path;
+
+  path = strtok(path_env, ":");
+  for (i = 0; i < 4096 && path; i++) {
+    pathes[i] = path;
+    path = strtok(NULL, ":");
+  }
+
+  if (i == 4096 && path) {
+    fprintf(stderr, "$PATH too long to parse\n");
+    free(pathes);
+    return NULL;
+  }
+  
+  pathes[i] = NULL;
+  return pathes;
+}
+
+/* Find program from the PATH environment */
+char *resolve_path(char *path, char **pathes)
+{
+  char *ret;
+
+  struct dirent *dir_entry;
+  for (int i = 0; pathes[i]; ++i) {
+    DIR *dir;
+    if ((dir = opendir(pathes[i])) != NULL) {
+      while ((dir_entry = readdir(dir)) != NULL) {
+	if (strcmp(dir_entry->d_name, path) == 0) {
+	  ret = (char *)malloc(strlen(dir_entry->d_name) + 1 + strlen(path) + 1);
+	  strcpy(ret, pathes[i]);
+	  strncat(ret, "/", 1);
+	  strcat(ret, path);
+	  return ret;
+	}
+      }
+      closedir(dir);
+    }
+  }
+  return NULL;
+}
 
 /* Prints a helpful description for the given command */
 int cmd_help(struct tokens *tokens) {
@@ -85,7 +134,26 @@ void Execv(struct tokens *tokens) {
   char **argv = (char **)malloc((tokens_length + 1) * sizeof(char*));
   pid_t pid;
   int status;
+  bool path_from_env = false;
 
+  /* If the path does not contain '/', then check PATH. */
+  if (strchr(path, '/') == NULL) {
+    char *path_env;
+    char *env = getenv("PATH");
+    if (env != NULL) {
+      char **pathes;
+      char *tmp;
+      path_env = (char *) malloc(strlen(env) + 1);
+      strcpy(path_env, env);
+      pathes = parse_path_env(path_env);
+      if ((tmp = resolve_path(path, pathes)) != NULL) {
+	path = tmp;
+	path_from_env = true;
+      }
+      free(path_env);
+    }
+  }
+    
   for (int i = 0; i < tokens_length; ++i)
     argv[i] = tokens_get_token(tokens, i);
   argv[tokens_length] = NULL;
@@ -94,10 +162,14 @@ void Execv(struct tokens *tokens) {
   if (pid < 0)
     perror("fork: ");
   else if (pid == 0) {
-    if (execv(path, argv) == -1)
+    if (execv(path, argv) == -1) {
       perror("execv: ");
+      exit(1);
+    }
   }
   wait(&status);
+  if (path_from_env)
+    free(path);
   free(argv);
 }
 
