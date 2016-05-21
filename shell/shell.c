@@ -10,6 +10,8 @@
 #include <termios.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "tokenizer.h"
 
@@ -95,6 +97,79 @@ char *resolve_path(char *path, char **pathes)
   return NULL;
 }
 
+typedef enum IO_type {INPUT, OUTPUT} io_type;
+
+typedef struct io_redirection_info {
+  bool is_io_re;
+  io_type input_or_output;
+} io_redirection_info;
+
+/* Determine whether there is an Input/Output Redirection.
+ * If there is an i/o redirection, return the index,
+ * else return -1.
+ */
+io_redirection_info get_redirection_info(struct tokens *tokens)
+{
+  io_redirection_info ret;
+  int tokens_length = tokens_get_length(tokens);
+  
+  for (int i = 0; i < tokens_length; ++i) {
+    int is_input = strcmp("<", tokens_get_token(tokens, i));
+    int is_output = strcmp(">", tokens_get_token(tokens, i));
+
+    if (is_input == 0 || is_output == 0) {
+      if (i != tokens_length - 2 || i == 0) {
+	fprintf(stderr, "-yngsh: IO redirection syntax error\n");
+	return;
+      }
+      if (is_input == 0) {
+	ret.is_io_re = true;
+	ret.input_or_output = INPUT;
+	return ret;
+      } else if (is_output == 0) {
+	ret.is_io_re = true;
+	ret.input_or_output = OUTPUT;
+	return ret;
+      }
+    }
+  }
+  ret.is_io_re = false;
+  return ret;
+}
+
+/* Do Input/Output Redirection. */
+int do_io_redirection(io_redirection_info io_info, struct tokens *tokens)
+{
+  char *file_name;
+  int fd;
+
+  /* The syntax is 
+   *     [process] [optional args] < [file]
+   */
+  file_name = tokens_get_token(tokens, tokens_get_length(tokens) - 1);
+  if (io_info.input_or_output == OUTPUT) {
+      if ((fd = open(file_name, O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0) {
+	perror(file_name);
+	exit(1);
+      }
+      if (dup2(fd, STDOUT_FILENO) < 0) {
+	perror("dup2 error ");
+	return;
+      }
+  }
+  else {
+    if ((fd = open(file_name, O_RDONLY, 0)) < 0) {
+      perror(file_name);
+      return;
+    }
+    if (dup2(fd, STDIN_FILENO) < 0) {
+      perror("dup2 error ");
+      return;
+    }
+  }
+  return fd;
+}
+
 /* Prints a helpful description for the given command */
 int cmd_help(struct tokens *tokens) {
   for (int i = 0; i < sizeof(cmd_table) / sizeof(fun_desc_t); i++)
@@ -129,12 +204,15 @@ int cmd_cd(struct tokens *tokens) {
 
 /* Execute programs */
 void Execv(struct tokens *tokens) {
-  int tokens_length = tokens_get_length(tokens);
-  char *path = tokens_get_token(tokens, 0);
-  char **argv = (char **)malloc((tokens_length + 1) * sizeof(char*));
-  pid_t pid;
-  int status;
+  int status, fd;
+  char **argv;
+  pid_t pid;  
   bool path_from_env = false;
+  int args = tokens_get_length(tokens);
+  char *path = tokens_get_token(tokens, 0);
+  int stdout_copy = dup(STDOUT_FILENO);
+  int stdin_copy = dup(STDIN_FILENO);
+  io_redirection_info io_re_info = get_redirection_info(tokens);
 
   /* If the path does not contain '/', then check PATH. */
   if (strchr(path, '/') == NULL) {
@@ -153,10 +231,19 @@ void Execv(struct tokens *tokens) {
       free(path_env);
     }
   }
-    
-  for (int i = 0; i < tokens_length; ++i)
+  
+  /* Test whether there is an i/o redirection. 
+   * If there is, does the i/o redirection.
+   */
+  if (io_re_info.is_io_re) {
+    fd = do_io_redirection(io_re_info, tokens);
+    args -= 2;
+  }
+  
+  argv = (char **)malloc((args + 1) * sizeof(char*));
+  for (int i = 0; i < args; ++i)
     argv[i] = tokens_get_token(tokens, i);
-  argv[tokens_length] = NULL;
+  argv[args] = NULL;
   
   pid = fork();
   if (pid < 0)
@@ -171,6 +258,13 @@ void Execv(struct tokens *tokens) {
   if (path_from_env)
     free(path);
   free(argv);
+  if (io_re_info.is_io_re) {
+    close(fd);
+    if (io_re_info.input_or_output == OUTPUT)
+      dup2(stdout_copy, STDOUT_FILENO);
+    else
+      dup2(stdin_copy, STDIN_FILENO);
+  }
 }
 
 /* Looks up the built-in command, if it exists. */
