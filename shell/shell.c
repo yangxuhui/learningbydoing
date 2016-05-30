@@ -49,6 +49,89 @@ fun_desc_t cmd_table[] = {
   {cmd_cd, "cd", "changes the current working directory to the specified directory"},
 };
 
+/************************************
+ ****utils for I/O redirection*******
+ ************************************/
+
+typedef enum IO_type {INPUT, OUTPUT} io_type;
+
+typedef struct io_redirection_info {
+  bool is_io_re;
+  io_type input_or_output;
+} io_redirection_info;
+
+/* Get the I/O redirection information. */
+io_redirection_info get_redirection_info(struct tokens *tokens)
+{
+  io_redirection_info ret;
+  int tokens_length = tokens_get_length(tokens);
+  
+  for (int i = 0; i < tokens_length; ++i) {
+    int is_input = strcmp("<", tokens_get_token(tokens, i));
+    int is_output = strcmp(">", tokens_get_token(tokens, i));
+
+    if (is_input == 0 || is_output == 0) {
+      if (i != tokens_length - 2 || i == 0) {
+	fprintf(stderr, "shell: IO redirection syntax error\n");
+	ret.is_io_re = true;
+	return ret;
+      }
+      if (is_input == 0) {
+	ret.is_io_re = true;
+	ret.input_or_output = INPUT;
+	return ret;
+      } else if (is_output == 0) {
+	ret.is_io_re = true;
+	ret.input_or_output = OUTPUT;
+	return ret;
+      }
+    }
+  }
+  ret.is_io_re = false;
+  return ret;
+}
+
+/* Do Input/Output Redirection. 
+ * On suesses, returns a file discriptor,
+ * otherwise, returns -1.
+ */
+int do_io_redirection(io_redirection_info io_info, struct tokens *tokens)
+{
+  char *file_name;
+  int fd;
+
+  /* The syntax is 
+   *     [process] [optional args] < [file]
+   */
+  file_name = tokens_get_token(tokens, tokens_get_length(tokens) - 1);
+  if (io_info.input_or_output == OUTPUT) {
+      if ((fd = open(file_name, O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0) {
+	perror(file_name);
+	return -1;
+      }
+      if (dup2(fd, STDOUT_FILENO) < 0) {
+	perror("dup2 error ");
+	return -1;
+      }
+  }
+  else {
+    if ((fd = open(file_name, O_RDONLY, 0)) < 0) {
+      perror(file_name);
+      return -1;
+    }
+    if (dup2(fd, STDIN_FILENO) < 0) {
+      perror("dup2 error ");
+      return -1;
+    }
+  }
+  return fd;
+}
+
+
+/************************************
+ ****utils for execute program*******
+ ************************************/
+
 /* Parse the $PATH envirment.
  * Returns a new array of pointers to each path value */
 char **parse_path_env(char *path_env)
@@ -95,111 +178,6 @@ char *resolve_path(char *path, char **pathes)
     }
   }
   return NULL;
-}
-
-typedef enum IO_type {INPUT, OUTPUT} io_type;
-
-typedef struct io_redirection_info {
-  bool is_io_re;
-  io_type input_or_output;
-} io_redirection_info;
-
-/* Determine whether there is an Input/Output Redirection.
- * If there is an i/o redirection, return the index,
- * else return -1.
- */
-io_redirection_info get_redirection_info(struct tokens *tokens)
-{
-  io_redirection_info ret;
-  int tokens_length = tokens_get_length(tokens);
-  
-  for (int i = 0; i < tokens_length; ++i) {
-    int is_input = strcmp("<", tokens_get_token(tokens, i));
-    int is_output = strcmp(">", tokens_get_token(tokens, i));
-
-    if (is_input == 0 || is_output == 0) {
-      if (i != tokens_length - 2 || i == 0) {
-	fprintf(stderr, "-yngsh: IO redirection syntax error\n");
-	return;
-      }
-      if (is_input == 0) {
-	ret.is_io_re = true;
-	ret.input_or_output = INPUT;
-	return ret;
-      } else if (is_output == 0) {
-	ret.is_io_re = true;
-	ret.input_or_output = OUTPUT;
-	return ret;
-      }
-    }
-  }
-  ret.is_io_re = false;
-  return ret;
-}
-
-/* Do Input/Output Redirection. */
-int do_io_redirection(io_redirection_info io_info, struct tokens *tokens)
-{
-  char *file_name;
-  int fd;
-
-  /* The syntax is 
-   *     [process] [optional args] < [file]
-   */
-  file_name = tokens_get_token(tokens, tokens_get_length(tokens) - 1);
-  if (io_info.input_or_output == OUTPUT) {
-      if ((fd = open(file_name, O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0) {
-	perror(file_name);
-	exit(1);
-      }
-      if (dup2(fd, STDOUT_FILENO) < 0) {
-	perror("dup2 error ");
-	return;
-      }
-  }
-  else {
-    if ((fd = open(file_name, O_RDONLY, 0)) < 0) {
-      perror(file_name);
-      return;
-    }
-    if (dup2(fd, STDIN_FILENO) < 0) {
-      perror("dup2 error ");
-      return;
-    }
-  }
-  return fd;
-}
-
-/* Prints a helpful description for the given command */
-int cmd_help(struct tokens *tokens) {
-  for (int i = 0; i < sizeof(cmd_table) / sizeof(fun_desc_t); i++)
-    printf("%s - %s\n", cmd_table[i].cmd, cmd_table[i].doc);
-  return 1;
-}
-
-/* Exits this shell */
-int cmd_exit(struct tokens *tokens) {
-  exit(0);
-}
-
-/* Prints the current working directory to standard output. */
-int cmd_pwd(struct tokens *tokens) {
-  char current_dir_name[4096];
-
-  if (getcwd(current_dir_name, 4096) != NULL)
-    printf("%s\n", current_dir_name);
-  else
-    perror("pwd: ");
-  return 1;
-}
-
-/* Changes the current working directory to the specified directory. */
-int cmd_cd(struct tokens *tokens) {
-  char *path = tokens_get_token(tokens, 1);
-
-  if (chdir(path) != 0)
-    perror("cd: ");
-  return 1;
 }
 
 /* Execute programs */
@@ -249,6 +227,21 @@ void Execv(struct tokens *tokens) {
   if (pid < 0)
     perror("fork: ");
   else if (pid == 0) {
+
+    /* Each program is in its own process group */
+    /*
+    if (setpgid(getpid(), getpid()) < 0) {
+      perror("error ");
+      exit(1);
+    }
+    tcsetpgrp(0, getpgrp());
+    */
+    signal(SIGINT, SIG_DFL);
+    signal(SIGQUIT, SIG_DFL);
+    signal(SIGTSTP, SIG_DFL);
+    signal(SIGTTIN, SIG_DFL);
+    signal(SIGTTOU, SIG_DFL);
+
     if (execv(path, argv) == -1) {
       perror("execv: ");
       exit(1);
@@ -265,6 +258,43 @@ void Execv(struct tokens *tokens) {
     else
       dup2(stdin_copy, STDIN_FILENO);
   }
+}
+
+
+/****************************
+ ***Built-in commands********
+ ****************************/
+
+/* Prints a helpful description for the given command */
+int cmd_help(struct tokens *tokens) {
+  for (int i = 0; i < sizeof(cmd_table) / sizeof(fun_desc_t); i++)
+    printf("%s - %s\n", cmd_table[i].cmd, cmd_table[i].doc);
+  return 1;
+}
+
+/* Exits this shell */
+int cmd_exit(struct tokens *tokens) {
+  exit(0);
+}
+
+/* Prints the current working directory to standard output. */
+int cmd_pwd(struct tokens *tokens) {
+  char current_dir_name[4096];
+
+  if (getcwd(current_dir_name, 4096) != NULL)
+    printf("%s\n", current_dir_name);
+  else
+    perror("pwd: ");
+  return 1;
+}
+
+/* Changes the current working directory to the specified directory. */
+int cmd_cd(struct tokens *tokens) {
+  char *path = tokens_get_token(tokens, 1);
+
+  if (chdir(path) != 0)
+    perror("cd: ");
+  return 1;
 }
 
 /* Looks up the built-in command, if it exists. */
@@ -289,6 +319,13 @@ void init_shell() {
      * foreground, we'll receive a SIGCONT. */
     while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp()))
       kill(-shell_pgid, SIGTTIN);
+
+    /* Ignore interactive and job-control signals */
+    signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
 
     /* Saves the shell's process id */
     shell_pgid = getpid();
