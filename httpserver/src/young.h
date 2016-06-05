@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <stdlib.h>
+#include <signal.h>
+
 
 #include "yng_connection.h"
 #include "yng_util.h"

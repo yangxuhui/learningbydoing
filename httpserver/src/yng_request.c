@@ -246,10 +246,7 @@ ssize_t rio_writen(int fd, char *usrbuf, size_t n)
 
   while (nleft > 0) {
     if ((nwritten = write(fd, bufp, nleft)) <= 0) {
-      if (errno = EINTR)
-	nwritten = 0;        /* Interrupted by sig handler return */
-      else
-	return -1;        /* errno set by write() */
+      return -1;
     }
     nleft -= nwritten;
     bufp += nwritten;
