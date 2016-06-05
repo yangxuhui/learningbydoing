@@ -10,22 +10,25 @@
 #include "young.h"
 
 
-void sigchld_handler(int sig)
+void *thread(void *vargp)
 {
-  while (waitpid(-1, 0, WNOHANG) >0)
-    ;
-  return;
+  int connfd = *((int *)vargp);
+  pthread_detach(pthread_self());
+  free(vargp);
+  yng_serve_connection(connfd);
+  close(connfd);
+  return NULL;
 }
 
 
 int main(int argc, char **argv)
 {
   char *port;
-  int listen_sockfd, connect_sockfd;
+  int listen_sockfd, *connect_sockfd_ptr;
   struct sockaddr_storage client_addr;
   socklen_t client_addr_len;
   char server_name[NAMESIZE], client_name[NAMESIZE];
-  pid_t pid;
+  pthread_t tid;
   
   if (argc != 2) {
     fprintf(stderr, "usage: young <port>\n");
@@ -39,31 +42,21 @@ int main(int argc, char **argv)
 	 yng_getsockname(listen_sockfd, server_name));
 
   signal(SIGPIPE, SIG_IGN);
-  signal(SIGCHLD, sigchld_handler);
 
   while (1) {
-    connect_sockfd = accept(listen_sockfd,
+    connect_sockfd_ptr = malloc(sizeof(int));
+    *connect_sockfd_ptr = accept(listen_sockfd,
 				(struct sockaddr *)&client_addr,
 				&client_addr_len);
-    if (connect_sockfd < 0) {
+    if (*connect_sockfd_ptr < 0) {
       fprintf(stderr, "accept error: %s\n", strerror(errno));
       exit(1);
     }
 
     printf("Accepted a connection from %s\n",
-	   yng_getpeername(connect_sockfd, client_name));
+	   yng_getpeername(*connect_sockfd_ptr, client_name));
 
-    if ((pid = fork()) < 0) {
-      fprintf(stderr, "fork error: %s\n", strerror(errno));
-    }
-    
-    if (pid == 0) {
-      close(listen_sockfd);
-      yng_serve_connection(connect_sockfd);
-      close(connect_sockfd);
-      exit(0);
-    }
-    close(connect_sockfd);
+    pthread_create(&tid, NULL, thread, connect_sockfd_ptr);
   }
   exit(0);
 }

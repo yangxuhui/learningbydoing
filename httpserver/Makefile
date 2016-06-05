@@ -1,7 +1,7 @@
 all: young
 
 young: young.o yng_connection.o yng_util.o yng_request.o
-	gcc young.o yng_connection.o yng_util.o yng_request.o -o young
+	gcc young.o yng_connection.o yng_util.o yng_request.o -o young -pthread
 
 young.o: src/young.c
 	gcc -I src/ -c src/young.c

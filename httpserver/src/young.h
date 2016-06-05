@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <pthread.h>
 
 
 #include "yng_connection.h"
